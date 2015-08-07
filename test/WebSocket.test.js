@@ -39,6 +39,15 @@ describe('WebSocket', function() {
         done();
       }
     });
+    it('throws TypeError when called without new', function(done) {
+      try {
+        var ws = WebSocket('ws://localhost:' + port);
+      }
+      catch (e) {
+        e.should.be.instanceof(TypeError);
+        done();
+      }
+    });
   });
 
   describe('options', function() {
@@ -706,7 +715,7 @@ describe('WebSocket', function() {
           ws.send(array.buffer);
         });
         ws.onmessage = function (event) {
-          assert.ok(event.type = 'Binary');
+          assert.ok(event.binary);
           assert.ok(areArraysEqual(array, new Float32Array(getArrayBuffer(event.data))));
           ws.terminate();
           srv.close();
@@ -723,7 +732,7 @@ describe('WebSocket', function() {
           ws.send(buf);
         });
         ws.onmessage = function (event) {
-          assert.ok(event.type = 'Binary');
+          assert.ok(event.binary);
           assert.ok(areArraysEqual(event.data, buf));
           ws.terminate();
           srv.close();
@@ -1603,6 +1612,32 @@ describe('WebSocket', function() {
         client.send('hi')
       });
     });
+
+    it('should have type set on Events', function(done) {
+      var wss = new WebSocketServer({port: ++port}, function() {
+        var ws = new WebSocket('ws://localhost:' + port);
+        ws.addEventListener('open', function(openEvent) {
+          assert.equal('open', openEvent.type);
+        });
+        ws.addEventListener('message', function(messageEvent) {
+          assert.equal('message', messageEvent.type);
+          wss.close();
+        });
+        ws.addEventListener('close', function(closeEvent) {
+          assert.equal('close', closeEvent.type);
+          ws.emit('error', new Error('forced'));
+        });
+        ws.addEventListener('error', function(errorEvent) {
+          assert.equal(errorEvent.message, 'forced');
+          assert.equal('error', errorEvent.type);
+          ws.terminate();
+          done();
+        });
+      });
+      wss.on('connection', function(client) {
+        client.send('hi')
+      });
+    });
   });
 
   describe('ssl', function() {
@@ -1822,6 +1857,21 @@ describe('WebSocket', function() {
         var ws = new WebSocket('ws://localhost:' + port, options);
       });
     });
+
+    it('excludes default ports from host header', function(done) {
+      // can't create a server listening on ports 80 or 443
+      // so we need to expose the method that does this
+      var buildHostHeader = WebSocket.buildHostHeader
+      var host = buildHostHeader(false, 'localhost', 80)
+      assert.equal('localhost', host);
+      host = buildHostHeader(false, 'localhost', 88)
+      assert.equal('localhost:88', host);
+      host = buildHostHeader(true, 'localhost', 443)
+      assert.equal('localhost', host);
+      host = buildHostHeader(true, 'localhost', 8443)
+      assert.equal('localhost:8443', host);
+      done()
+    });
   });
 
   describe('permessage-deflate', function() {
@@ -1890,6 +1940,50 @@ describe('WebSocket', function() {
         });
         ws.on('message', function(message, flags) {
           assert.equal('hi', message);
+          ws.terminate();
+          wss.close();
+          done();
+        });
+      });
+      wss.on('connection', function(ws) {
+        ws.on('message', function(message, flags) {
+          ws.send(message, {compress: true});
+        });
+      });
+    });
+
+    it('can send and receive a typed array', function(done) {
+      var array = new Float32Array(5);
+      for (var i = 0; i < array.length; i++) array[i] = i / 2;
+      var wss = new WebSocketServer({port: ++port, perMessageDeflate: true}, function() {
+        var ws = new WebSocket('ws://localhost:' + port, {perMessageDeflate: true});
+        ws.on('open', function() {
+          ws.send(array, {compress: true});
+        });
+        ws.on('message', function(message, flags) {
+          assert.ok(areArraysEqual(array, new Float32Array(getArrayBuffer(message))));
+          ws.terminate();
+          wss.close();
+          done();
+        });
+      });
+      wss.on('connection', function(ws) {
+        ws.on('message', function(message, flags) {
+          ws.send(message, {compress: true});
+        });
+      });
+    });
+
+    it('can send and receive ArrayBuffer', function(done) {
+      var array = new Float32Array(5);
+      for (var i = 0; i < array.length; i++) array[i] = i / 2;
+      var wss = new WebSocketServer({port: ++port, perMessageDeflate: true}, function() {
+        var ws = new WebSocket('ws://localhost:' + port, {perMessageDeflate: true});
+        ws.on('open', function() {
+          ws.send(array.buffer, {compress: true});
+        });
+        ws.on('message', function(message, flags) {
+          assert.ok(areArraysEqual(array, new Float32Array(getArrayBuffer(message))));
           ws.terminate();
           wss.close();
           done();
